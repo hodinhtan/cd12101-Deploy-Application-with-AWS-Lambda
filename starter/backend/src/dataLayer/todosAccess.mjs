@@ -1,135 +1,129 @@
-const AWS = require("aws-sdk");
-const AWSXRay = require("aws-xray-sdk");
-const { createLogger } = require("../utils/logger.mjs");
+import AWS from "aws-sdk";
+import { createLogger } from "../utils/logger.mjs";
+import pkg from 'aws-xray-sdk';
+const { captureAWS } = pkg;
 
-const XAWS = AWSXRay.captureAWS(AWS);
+const XAWS = captureAWS(AWS);
 const logger = createLogger("TodoAccess");
 const url_expiration = process.env.SIGNED_URL_EXPIRATION;
 const s3_bucket_name = process.env.ATTACHMENT_S3_BUCKET;
+const docClient = createDynamoDBClient();
+const todosTable = process.env.TODOS_TABLE;
+const todosIndex = process.env.TODOS_CREATED_AT_INDEX;
+const S3 = new XAWS.S3({ signatureVersion: "v4" });
 
-class TodosAccess {
-  constructor(
-    docClient = createDynamoDBClient(),
-    todosTable = process.env.TODOS_TABLE,
-    todosIndex = process.env.TODOS_CREATED_AT_INDEX,
-    S3 = new XAWS.S3({ signatureVersion: "v4" }),
-    bucket_name = s3_bucket_name
-  ) {
-    this.docClient = docClient;
-    this.todosTable = todosTable;
-    this.todosIndex = todosIndex;
-    this.S3 = S3;
-    this.bucket_name = bucket_name;
-  }
+export async function getAll(userId) {
+  logger.info("Call function getAll");
+  const result = await docClient
+    .query({
+      TableName: todosTable,
+      IndexName: todosIndex,
+      KeyConditionExpression: "userId = :userId",
+      ExpressionAttributeValues: {
+        ":userId": userId,
+      },
+    })
+    .promise();
+  return result.Items;
+}
 
-  async getAll(userId) {
-    logger.info("Call function getall");
-    const result = await this.docClient
-      .query({
-        TableName: this.todosTable,
-        IndexName: this.todosIndex,
-        KeyConditionExpression: "userId = :userId",
-        ExpressionAttributeValues: {
-          ":userId": userId,
-        },
-      })
-      .promise();
-    return result.Items;
-  }
+export async function create(item) {
+  logger.info("Call function create");
+  await docClient
+    .put({
+      TableName: todosTable,
+      Item: item,
+    })
+    .promise();
+  return item;
+}
 
-  async create(item) {
-    logger.info("Call function create");
-    await this.docClient
-      .put({
-        TableName: this.todosTable,
-        Item: item,
-      })
-      .promise();
-    return item;
-  }
-
-  async update(userId, todoId, todoUpdate) {
-    logger.info(`Updating todo item ${todoId} in ${this.todosTable}`);
-    try {
-      await this.docClient
-        .update({
-          TableName: this.todosTable,
-          Key: {
-            userId,
-            todoId,
-          },
-          UpdateExpression:
-            "set #name = :name, #dueDate = :dueDate, #done = :done",
-          ExpressionAttributeNames: {
-            "#name": "name",
-            "#dueDate": "dueDate",
-            "#done": "done",
-          },
-          ExpressionAttributeValues: {
-            ":name": todoUpdate.name,
-            ":dueDate": todoUpdate.dueDate,
-            ":done": todoUpdate.done,
-          },
-          ReturnValues: "UPDATED_NEW",
-        })
-        .promise();
-    } catch (error) {
-      logger.error("Error =======> updating Todo.", {
-        error: error,
-        data: {
-          todoId,
-          userId,
-          todoUpdate,
-        },
-      });
-      throw Error(error);
-    }
-    return todoUpdate;
-  }
-
-  async delete(userId, todoId) {
-    logger.info(`Deleting todo item ${todoId} from ${this.todosTable}`);
-    try {
-      await this.docClient
-        .delete({
-          TableName: this.todosTable,
-          Key: {
-            userId,
-            todoId,
-          },
-        })
-        .promise();
-      return "success";
-    } catch (e) {
-      logger.info("Error ==>>", {
-        error: e,
-      });
-      return "Error";
-    }
-  }
-
-  async getUploadUrl(todoId, userId) {
-    const uploadUrl = this.S3.getSignedUrl("putObject", {
-      Bucket: this.bucket_name,
-      Key: todoId,
-      Expires: Number(url_expiration),
-    });
-    await this.docClient
+export async function update(userId, todoId, todoUpdate) {
+  logger.info(`Updating todo item ${todoId} in ${todosTable}`);
+  try {
+    await docClient
       .update({
-        TableName: this.todosTable,
+        TableName: todosTable,
         Key: {
           userId,
           todoId,
         },
-        UpdateExpression: "set attachmentUrl = :URL",
+        UpdateExpression:
+          "set #name = :name, #dueDate = :dueDate, #done = :done",
+        ExpressionAttributeNames: {
+          "#name": "name",
+          "#dueDate": "dueDate",
+          "#done": "done",
+        },
         ExpressionAttributeValues: {
-          ":URL": uploadUrl.split("?")[0],
+          ":name": todoUpdate.name,
+          ":dueDate": todoUpdate.dueDate,
+          ":done": todoUpdate.done,
         },
         ReturnValues: "UPDATED_NEW",
       })
       .promise();
-    return uploadUrl;
+  } catch (error) {
+    logger.error("Error =======> updating Todo.", {
+      error: error,
+      data: {
+        todoId,
+        userId,
+        todoUpdate,
+      },
+    });
+    throw Error(error);
   }
+  return todoUpdate;
+}
+
+export async function deleteTodo(userId, todoId) {
+  logger.info(`Deleting todo item ${todoId} from ${todosTable}`);
+  try {
+    await docClient
+      .delete({
+        TableName: todosTable,
+        Key: {
+          userId,
+          todoId,
+        },
+        ConditionExpression: "attribute_exists(todoId)"
+      })
+      .promise();
+    return "success";
+  } catch (e) {
+    logger.error("Error deleting todo item", {
+      error: e,
+      data: {
+        userId,
+        todoId,
+      },
+    });
+    throw new Error(e);
+  }
+}
+
+export async function getUploadUrl(todoId, userId) {
+  const uploadUrl = S3.getSignedUrl("putObject", {
+    Bucket: s3_bucket_name,
+    Key: todoId,
+    Expires: Number(url_expiration),
+  });
+  await docClient
+    .update({
+      TableName: todosTable,
+      Key: {
+        userId,
+        todoId,
+      },
+      UpdateExpression: "set attachmentUrl = :URL",
+      ExpressionAttributeValues: {
+        ":URL": uploadUrl.split("?")[0],
+      },
+      ReturnValues: "UPDATED_NEW",
+    })
+    .promise();
+  return uploadUrl;
 }
 
 function createDynamoDBClient() {
@@ -143,5 +137,3 @@ function createDynamoDBClient() {
 
   return new XAWS.DynamoDB.DocumentClient();
 }
-
-module.exports = { TodosAccess };
