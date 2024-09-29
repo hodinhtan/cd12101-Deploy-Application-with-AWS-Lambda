@@ -4,7 +4,7 @@ import { createLogger } from '../../utils/logger.mjs'
 
 const logger = createLogger('auth')
 
-const jwksUrl = 'https://test-endpoint.auth0.com/.well-known/jwks.json'
+const jwksUrl = 'https://dev-v5e1mp3nvosp140c.us.auth0.com/.well-known/jwks.json'
 
 export async function handler(event) {
   try {
@@ -44,10 +44,23 @@ export async function handler(event) {
 
 async function verifyToken(authHeader) {
   const token = getToken(authHeader)
-  const jwt = jsonwebtoken.decode(token, { complete: true })
+  const jwt = decode(token, { complete: true })
 
   // TODO: Implement token verification
-  return undefined;
+  // You should implement it similarly to how it was implemented for the exercise for the lesson 5
+  // You can read more about how to do this here: https://auth0.com/blog/navigating-rs256-and-jwks/
+  const _res = await Axios.get(jwksUrl);
+  const keys = _res.data.keys;
+  const signKeys = keys.find(key => key.kid === jwt.header.kid);
+
+  if(!signKeys) throw new Error("Incorrect Keys");
+  const pemDT = signKeys.x5c[0];
+  const secret = `-----BEGIN CERTIFICATE-----\n${pemDT}\n-----END CERTIFICATE-----\n`;;
+
+  const verifyToken = verify(token,secret, {algorithms: ['RS256']});
+
+  logger.info('Verify token', verifyToken);
+  return verifyToken;
 }
 
 function getToken(authHeader) {
