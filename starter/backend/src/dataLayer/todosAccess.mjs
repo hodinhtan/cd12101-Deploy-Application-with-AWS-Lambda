@@ -87,19 +87,14 @@ export async function deleteTodo(userId, todoId) {
           userId,
           todoId,
         },
-        ConditionExpression: "attribute_exists(todoId)"
       })
       .promise();
     return "success";
   } catch (e) {
-    logger.error("Error deleting todo item", {
+    logger.info("Error ==>>", {
       error: e,
-      data: {
-        userId,
-        todoId,
-      },
     });
-    throw new Error(e);
+    return "Error";
   }
 }
 

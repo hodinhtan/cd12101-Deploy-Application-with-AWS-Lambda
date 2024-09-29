@@ -26,7 +26,7 @@ export const handler = async (event) => {
         'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS', // Specify allowed methods
         'Access-Control-Allow-Headers': 'Content-Type', // Specify allowed headers
       },
-      statusCode: 204,
+      statusCode: 200,
       body: JSON.stringify({ "message": "Item deleted" })
     };
   } catch (error) {
